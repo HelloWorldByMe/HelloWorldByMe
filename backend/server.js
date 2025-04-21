@@ -129,7 +129,7 @@ app.get("/messages/history", async (req, res) => {
     }
 
     const messagesQuery = await pool.query(
-      `
+      ` 
         SELECT id, sender, receiver, content, timestamp
         FROM messages
         WHERE (sender = $1 AND receiver = $2)
@@ -667,7 +667,255 @@ app.post("/api/organizations/:id/members/:userId/role", async (req, res) => {
   }
 });
 
+app.get("/api/clients", async (req, res) => {
+  try {
+    // query clients table
+    const foundClient = await pool.query("SELECT * FROM clients");
+
+    const clientServices = await Promise.all(
+      foundClient.rows.map(async (client) => {
+        // query client services
+        const services = await pool.query(
+          `SELECT s.name FROM referrals r JOIN services s ON r.service_id = s.id WHERE r.client_id = $1`,
+          [client.id]
+        );
+
+        // query client notes
+        const clientNotes = await pool.query(
+          `SELECT n.note, n.created_at, u.name FROM notes n JOIN users u ON n.user_id = u.user_id WHERE n.client_id = $1`,
+          [client.id]
+        );
+
+        return {
+          ...client,
+          services: services.rows.map((service) => service.name),
+          clientNotes: clientNotes.rows,
+        };
+      })
+    );
+
+    res.json({ clients: clientServices });
+  } catch (error) {
+    console.error("Fetch Clients Error: ", error);
+    res
+      .status(500)
+      .json({ error: "Failed to fetch clients", details: error.message });
+  }
+});
+
+app.post("/api/clients", async (req, res) => {
+  // defining loaded body
+  const {
+    name,
+    age,
+    gender,
+    veteran_stat,
+    num_of_kids,
+    current_situation,
+    services,
+    notes,
+    location_id,
+  } = req.body;
+
+  // referencing to mapping
+  const locationId = location_id === "" ? null : location_id;
+  // since the search bar doesn't have two seperate fields for full name
+  const [first_name, last_name] = name.split(" ");
+
+  try {
+    // query for clients info
+    const result = await pool.query(
+      `INSERT INTO clients (first_name, last_name, age, gender, veteran_stat, num_children, current_situation, location_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [
+        first_name,
+        last_name,
+        age,
+        gender,
+        veteran_stat,
+        num_of_kids,
+        current_situation,
+        locationId,
+      ]
+    );
+
+    const client_id = result.rows[0].id;
+    // map the services they request
+    if (services && services.length > 0) {
+      await Promise.all(
+        services.map(async (service) => {
+          await pool.query(
+            `INSERT INTO referrals (client_id, service_id) SELECT $1, id FROM services WHERE name = $2`,
+            [client_id, service]
+          );
+        })
+      );
+    }
+    // adding notes
+    if (notes && notes.length > 0) {
+      await Promise.all(
+        notes.map(async (note) => {
+          await pool.query(
+            `INSERT INTO notes(client_id, user_id, created_at) VALUES ($1, $2, $3, NOW())`,
+            [client_id, 1]
+          );
+        })
+      );
+    }
+
+    res.status(201).json({ message: "Client created successfully", client_id });
+  } catch (error) {
+    res.status(500).json({ error: "Error creating user" });
+    console.error("Error creating new client: ", error);
+  }
+});
+
+app.get("/api/locations", async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT l.*, c.first_name, c.last_name FROM locations l JOIN clients c ON l.client_id = c.id`
+    );
+    res.json(result.rows);
+  } catch (error) {
+    res.status(500).send("Error fetching locations");
+    console.error(error);
+  }
+});
+
+app.post("/api/locations", async (req, res) => {
+  const { latitude, longitude, client_id } = req.body;
+  try {
+    const result = await pool.query(
+      `INSERT INTO locations (latitude, longitude, client_id, timestamp) 
+      VALUES ($1, $2, $3, NOW()) RETURNING *`,
+      [latitude, longitude, client_id]
+    );
+
+    // just realized why the location ids are null
+    // i never updated the locations at all
+    const newLocation = result.rows[0].id;
+
+    await pool.query(`UPDATE clients SET location_id = $1 WHERE id = $2`, [
+      newLocation,
+      client_id,
+    ]);
+
+    res.status(201).json(result.rows[0]);
+  } catch (error) {
+    res.status(500).send("Error adding location");
+    console.error(error);
+  }
+});
+
+app.get("/api/referrals", async (req, res) => {
+  const { client_id, orgId, status } = req.query;
+
+  // query all referral info
+  let query = `SELECT r.*, 
+         s.name AS service_name, 
+         c.first_name, 
+         c.last_name, 
+         o.name AS organization_name
+  FROM referrals r
+  JOIN services s ON r.service_id = s.id
+  JOIN clients c ON r.client_id = c.id
+  JOIN organizations o ON r.org_id = o.id
+  WHERE (r.client_id = COALESCE($1, r.client_id)) 
+    AND (r.org_id = COALESCE($2, r.org_id)) 
+    AND (r.status = COALESCE($3, r.status))`;
+
+  const idenfication = [client_id, orgId, status];
+
+  try {
+    const results = await pool.query(query, idenfication);
+    res.json(results.rows);
+  } catch (error) {
+    res
+      .status(500)
+      .json({ error: "Failed to retrieve referrals", details: error.message });
+  }
+});
+
+app.post("/api/referrals", async (req, res) => {
+  const { client_id, orgId, status, created_at } = req.body;
+
+  // proof of referral
+  console.log("REFERRAL Load: ", req.body);
+
+  try {
+    // should probably refactor the database structure
+    // had to find the service id manually :(
+    const services = await pool.query(
+      `SELECT service_id FROM organization_services WHERE org_id = $1 LIMIT 1`,
+      [orgId]
+    );
+
+    const service_id = services.rows[0]?.service_id;
+
+    if (!service_id) {
+      return res
+        .status(400)
+        .json({ error: "No service found for this this organization" });
+    }
+    // submitting a referral
+    await pool.query(
+      `INSERT INTO referrals (client_id, org_id, service_id, status, created_at)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [client_id, orgId, service_id, status, created_at]
+    );
+
+    res.status(201).json({ message: "Referral added successfully." });
+  } catch (error) {
+    console.error("Error submitting referral:", error);
+    res
+      .status(500)
+      .json({ error: "Error adding referral", details: error.message });
+  }
+});
+
+app.post("/api/match-services", async (req, res) => {
+  const { age, gender, service } = req.body;
+
+  try {
+    // an ugly query where it works with the frontend to utilize matching logic
+    const matching = await pool.query(
+      `SELECT DISTINCT o.*, r.age_range, r.gender, r.available_beds, r.notes, s.name as service_name
+      FROM organizations o
+      JOIN restrictions r ON o.id = r.organization_id
+      JOIN organization_services os ON o.id = os.org_id
+      JOIN services s ON os.service_id = s.id
+      WHERE ($1 = 'any' OR r.age_range = $1 OR r.age_range = 'any')
+        AND ($2 = 'any' OR r.gender = $2 OR r.gender = 'any')
+        AND ($3 = 'any' OR s.name = $3)
+        AND r.available_beds > 0`,
+      [age, gender, service]
+    );
+
+    res.json({ matches: matching.rows });
+  } catch (error) {
+    console.error("Service Match Error: ", error);
+    res.status(500).json({ error: "Error matching services with client" });
+  }
+});
+
+// in order for the services to be matched with client, service restrictions have to be considered
+app.get("/api/restrictions", async (req, res) => {
+  try {
+    // query the restrictions table
+    const restrictions = await pool.query(`
+      SELECT r.*, o.name AS organization_name
+      FROM restrictions r
+      JOIN organizations o ON r.organization_id = o.id`);
+
+    res.json(restrictions.rows);
+  } catch (error) {
+    console.error("Error fetching restrictions: ", error);
+    res.status(500).json({ error: "Failed to fetch restrictions" });
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`Server running on port ${PORT}`)
 );
+// TO DO: please develop an API for this

@@ -1,61 +1,5 @@
 import React, { useEffect, useState } from "react";
 
-// shelter data used for testing
-const sheltersData = [
-  {
-    name: "Our Family Services Reunion House",
-    total_beds: 20,
-    available_beds: 3,
-    restrictions: {
-      gender: "any",
-      age_range: "12-17",
-      services: "any",
-      notes:
-        "Only takes unaccompanied youth aged 12-17, go to nearest Safe Place and call number",
-    },
-    bed_secured: false,
-  },
-  {
-    name: "Our Family Services Youth",
-    total_beds: 15,
-    available_beds: 0,
-    restrictions: {
-      gender: "any",
-      age_range: "18-24",
-      services: "any",
-      notes:
-        "Only takes aged 18-24, complete VI-SPDAT with CE access point for shelter referral. Call OFSY at given hours/days to receive more information",
-    },
-    bed_secured: false,
-  },
-  {
-    name: "Gospel Rescue Mission",
-    total_beds: 350,
-    available_beds: 0,
-    restrictions: {
-      gender: "any",
-      age_range: "18-24",
-      services: "any",
-      notes:
-        "Must come to location ASAP, as first come, serve first. Services are program-based.",
-    },
-    bed_secured: false,
-  },
-  {
-    name: "Primavera Casa Paloma Women's Shelter",
-    total_beds: 9,
-    available_beds: 1,
-    restrictions: {
-      gender: "female",
-      age_range: "18+",
-      services: "any",
-      notes:
-        "Only serves single women. ID and rapid test is required. 90-day stays and is also first come, first serve.",
-    },
-    bed_secured: false,
-  },
-];
-
 const ServiceMatch = () => {
   // default values
   const [clients, setClients] = useState({});
@@ -64,54 +8,164 @@ const ServiceMatch = () => {
   const [gender, setGender] = useState("Male");
   const [services, setServices] = useState("any");
   const [matches, setMatches] = useState([]);
+  const [shelters, setShelters] = useState([]);
   const [selectedShelter, setSelectedShelter] = useState(null);
 
+  // Helper function to get the token from localStorage
+  const getAuthToken = () => localStorage.getItem("token"); // Replace with your token location
+
   useEffect(() => {
-    const storedClients = JSON.parse(localStorage.getItem("clients")) || {};
-    setClients(storedClients);
+    const fetchClients = async () => {
+      const token = getAuthToken();
+      if (!token) {
+        alert("Unauthorized! Please log in.");
+        return;
+      }
+
+      try {
+        // fetching CLIENTS using user token
+        const clientsResponse = await fetch("/api/clients", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const clientsJson = await clientsResponse.json();
+        console.log("clientsJson:", clientsJson);
+
+        // mapping out clients
+        const map = {};
+        clientsJson.clients.forEach((client) => {
+          map[`${client.first_name} ${client.last_name}`] = client;
+        });
+
+        setClients(map);
+
+        // retrieving SHELTERS with token
+        const sheltersResponse = await fetch("/api/organizations", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+        const sheltersJson = await sheltersResponse.json();
+        console.log("sheltersJson:", sheltersJson);
+
+        // parsing service data
+        const parsed = sheltersJson.organizations.map((shelter) => ({
+          ...shelter,
+          restrictions: {
+            notes: shelter.description || "",
+            age_range: "any",
+            gender: "any",
+            services: "any",
+            ...(shelter.restrictions || {}),
+          },
+        }));
+
+        setShelters(parsed);
+      } catch (error) {
+        console.error("Error retrieving organizations: ", error);
+        alert("Failed to load data.");
+      }
+    };
+
+    fetchClients();
   }, []);
 
-  const handleMatch = () => {
+  const handleMatch = async () => {
+    // proof that matching is happening
+    console.log("Matching process has started...");
+
     if (!clients[selectedClient]) {
       alert("Please select a client");
       return;
     }
-    // portion that handles actual service matching data
-    const matchedShelters = sheltersData.filter((shelter) => {
-      const ageMatch =
-        shelter.restrictions.age_range === age ||
-        (age === "25+" && shelter.restrictions.age_range === "18+") ||
-        (age === "18-24" &&
-          (shelter.restrictions.age_range === "18-24" ||
-            shelter.restrictions.age_range === "18+"));
 
-      const genderMatch =
-        shelter.restrictions.gender === "any" ||
-        shelter.restrictions.gender
-          .toLowerCase()
-          .startsWith(gender.toLowerCase().charAt(0));
+    const token = getAuthToken();
 
-      const servicesMatch =
-        services === "any" ||
-        shelter.restrictions.services === "any" ||
-        shelter.restrictions.services === services;
+    try {
+      // proof that matching filters are applied
+      console.log("Sending match filters: ", {
+        age,
+        gender,
+        service: services,
+      });
 
-      return (
-        shelter.available_beds > 0 && ageMatch && genderMatch && servicesMatch
-      );
-    });
+      const response = await fetch("/api/match-services", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          age,
+          gender,
+          service: services,
+        }),
+      });
 
-    setMatches(matchedShelters);
+      const receive = await response.json();
+
+      const parsedMatches = receive.matches.map((shelter) => {
+        // filters out the shelters that have multiple services but under the same name
+        const individual_shelters = [...new Set(shelter.services)];
+
+        return {
+          ...shelter,
+          services: individual_shelters,
+          restrictions: {
+            notes: shelter.description || "",
+            age_range: "any",
+            gender: "any",
+            services: "any",
+            ...(shelter.restrictions || {}),
+          },
+        };
+      });
+
+      setMatches(parsedMatches);
+    } catch (error) {
+      console.error("Error during matching: ", error);
+      alert("Error matching services");
+    }
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!selectedShelter) {
       alert("Please select a shelter before submitting.");
       return;
     }
 
-    localStorage.setItem("selectedShelter", JSON.stringify(selectedShelter));
-    alert(`Shelter saved: ${selectedShelter.name}`);
+    // defining referral structure
+    const referrals = {
+      client_id: clients[selectedClient].id,
+      orgId: selectedShelter.id,
+      service_id: selectedShelter.services,
+      status: "pending",
+      created_at: new Date().toISOString(),
+    };
+
+    const token = getAuthToken();
+
+    try {
+      const refers = await fetch("/api/referrals", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(referrals),
+      });
+
+      if (refers.ok) {
+        alert("Client has a new referral");
+      } else {
+        alert("Referral submission failed.");
+      }
+    } catch (error) {
+      alert("Error concerning submitting the referral occurred.");
+      console.error("Error submitting referral: ", error);
+    }
   };
 
   // handles displays
@@ -192,26 +246,38 @@ const ServiceMatch = () => {
         {matches.length === 0 ? (
           <p>No shelters available</p>
         ) : (
-          matches.map((shelter, idx) => (
-            <div
-              key={idx}
-              className="border p-4 mb-3 bg-white shadow rounded-md"
-            >
-              <h3 className="font-bold">{shelter.name}</h3>
-              <p>Available Beds: {shelter.available_beds}</p>
-              <p>Restrictions: {shelter.restrictions.notes}</p>
-              <label className="flex items-center mt-2">
-                <input
-                  type="radio"
-                  name="selectedShelter"
-                  value={idx}
-                  onChange={() => setSelectedShelter(shelter)}
-                  className="mr-2"
-                />
-                Bed Secured
-              </label>
-            </div>
-          ))
+          matches
+            // again to eliminate the display duplication of services
+            .reduce((filteredShelter, shelter) => {
+              if (!filteredShelter.some((s) => s.id === shelter.id)) {
+                filteredShelter.push(shelter);
+              }
+              return filteredShelter;
+            }, [])
+            .map((shelter, idx) => (
+              <div
+                key={idx}
+                className="border p-4 mb-3 bg-white shadow rounded-md"
+              >
+                <h3 className="font-bold">{shelter.name}</h3>
+                <p>Available Beds: {shelter.available_beds}</p>
+                <p>
+                  Restrictions:{" "}
+                  {shelter.restrictions?.notes || "No restrictions listed"}
+                </p>
+
+                <label className="flex items-center mt-2">
+                  <input
+                    type="radio"
+                    name="selectedShelter"
+                    value={idx}
+                    onChange={() => setSelectedShelter(shelter)}
+                    className="mr-2"
+                  />
+                  Bed Secured
+                </label>
+              </div>
+            ))
         )}
       </div>
 
@@ -226,5 +292,4 @@ const ServiceMatch = () => {
     </div>
   );
 };
-
 export default ServiceMatch;
