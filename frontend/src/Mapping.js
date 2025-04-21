@@ -8,38 +8,13 @@ import {
   useMap,
 } from "react-leaflet";
 import { useEffect, useRef, useState } from "react";
-// had to import the marker icons directly instead of relying on it finding them in the public folder
 import L from "leaflet";
 import markerIcon2x from "leaflet/dist/images/marker-icon-2x.png";
 import markerIcon from "leaflet/dist/images/marker-icon.png";
 import markerShadow from "leaflet/dist/images/marker-shadow.png";
 import "leaflet/dist/leaflet.css";
 
-// fake cached data
-const fakeData = {
-  "Bob McBobbison": {
-    age: 25,
-    gender: "M",
-    situation: "unemployed",
-    coordinates: [],
-  },
-  "Ur Mom": { age: 56, gender: "F", situation: "homeless", coordinates: [] },
-  "Jesse Richardson": {
-    age: 32,
-    gender: "N/A",
-    situation: "bipolar disorder",
-    coordinates: [],
-  },
-  Susan: { age: 45, gender: "F", situation: "single mother", coordinates: [] },
-  "Michael Horston": {
-    age: 65,
-    gender: "M",
-    situation: "substance abuse",
-    coordinates: [],
-  },
-};
-
-// function that makes the map rendering more stable
+// resizes map size to screen
 function FixMapSize() {
   const map = useMap();
   useEffect(() => {
@@ -50,10 +25,8 @@ function FixMapSize() {
   return null;
 }
 
-// default location of Tucson
 const defaultPosition = [32.2226, -110.9747];
 
-// handles clicking on map
 function MapClickHandler({ onMapClick, active }) {
   useMapEvents({
     click(e) {
@@ -65,115 +38,120 @@ function MapClickHandler({ onMapClick, active }) {
   return null;
 }
 
-// function for actual mapping logic, where the data is parsed, states are initialized, map clicks are handled,
-// and data is then updated to reflect actions
-
 export default function Mapping() {
-  const [clients, setClients] = useState(
-    () => JSON.parse(localStorage.getItem("clients")) || fakeData
-  );
-  const [formData, setFormData] = useState({
-    name: "",
-    age: "",
-    gender: "",
-    situation: "",
-  });
-  const [searchName, setSearchName] = useState("");
+  const [clients, setClients] = useState([]);
+  const [selectedClientId, setSelectedClientId] = useState("");
   const [placedMarkerMode, setPlacedMarkerMode] = useState(false);
   const [activeMarkers, setActiveMarkers] = useState([]);
   const [activePolylines, setActivePolylines] = useState([]);
 
+  // retrieves CLIENT data
   useEffect(() => {
-    localStorage.setItem("clients", JSON.stringify(clients));
-  }, [clients]);
+    fetch("/api/clients")
+      .then((res) => res.json())
+      .then((data) => setClients(data.clients || []))
+      .catch((err) => console.error("Failed to fetch clients", err));
+  }, []);
 
-  const handleMapClick = (latlng) => {
-    if (!placedMarkerMode) return;
-
-    const time = new Date().toISOString();
-    const updatedClients = { ...clients };
-
-    if (!updatedClients[formData.name]) {
-      updatedClients[formData.name] = {
-        age: formData.age,
-        gender: formData.gender,
-        situation: formData.situation,
-        coordinates: [],
-      };
+  const handleMapClick = async (latlng) => {
+    if (!placedMarkerMode || !selectedClientId) {
+      alert("Please select a client before placing a marker.");
+      return;
     }
 
-    updatedClients[formData.name].coordinates.push({
-      ...latlng,
-      timestamp: time,
-    });
-    setClients(updatedClients);
-    setActiveMarkers((prevMarkers) => [
-      ...prevMarkers,
-      {
-        ...latlng,
-        name: formData.name,
-        age: formData.age,
-        gender: formData.gender,
-        situation: formData.situation,
-        timestamp: time,
-      },
-    ]);
-    // reset map
-    setFormData({ name: "", age: "", gender: "", situation: "" });
+    // defines what data is in the post request -> aligns with location table
+    const payload = {
+      latitude: latlng.lat,
+      longitude: latlng.lng,
+      client_id: selectedClientId,
+    };
+
+    try {
+      const res = await fetch("/api/locations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      const saved = await res.json();
+      setActiveMarkers([...activeMarkers, saved]);
+
+      // fixing the polylines -> make sure that the ids match datatype wise
+      const new_markers = [...activeMarkers, saved];
+      const client_markers = new_markers.filter(
+        (m) => m.client_id.toString() === selectedClientId.toString()
+      );
+      // if there's more than 1 marker, draw lines connecting the markers
+      if (client_markers.length >= 2) {
+        const polyline = client_markers.map((m) => [m.latitude, m.longitude]);
+        setActivePolylines((p) => [...p, polyline]);
+      }
+    } catch (err) {
+      console.error("Failed to save location:", err);
+    }
+
     setPlacedMarkerMode(false);
   };
 
-  // loads previous data
-  const loadClient = (name) => {
-    const client = clients[name];
-    if (!client) return alert("Client not found.");
-
-    setFormData({
-      name,
-      age: client.age,
-      gender: client.gender,
-      situation: client.situation,
-    });
-
-    setActiveMarkers([
-      ...client.coordinates.map((c) => ({
-        ...c,
-        name,
-        age: client.age,
-        gender: client.gender,
-        situation: client.situation,
-      })),
-    ]);
-
-    if (client.coordinates.length > 1) {
-      setActivePolylines([client.coordinates.map((c) => [c.lat, c.lng])]);
-    } else {
+  useEffect(() => {
+    if (!selectedClientId) {
+      setActiveMarkers([]);
       setActivePolylines([]);
+      return;
     }
-  };
+
+    fetch("/api/locations")
+      .then((res) => res.json())
+      .then((data) => {
+        const curr_markers = data.filter(
+          (m) => m.client_id.toString() === selectedClientId.toString()
+        );
+        // because of previous data insertion mistakes, makes sure that coordinates are valid
+        const validation = curr_markers.filter(
+          (m) => m.latitude && m.longitude
+        );
+
+        setActiveMarkers(curr_markers);
+
+        if (validation.length >= 2) {
+          const line = validation
+            .map((m) => {
+              if (m.latitude && m.longitude) {
+                return [m.latitude, m.longitude];
+              }
+              return null;
+            })
+            .filter(Boolean);
+
+          // setting up the lines
+          if (line.length >= 2) {
+            setActivePolylines([line]);
+          } else {
+            setActivePolylines([]);
+          }
+        } else {
+          setActivePolylines([]);
+        }
+      })
+      .catch((error) =>
+        console.error("Failed to fetch past markers for client: ", error)
+      );
+  }, [selectedClientId]);
 
   const clearMarkers = () => {
     setActiveMarkers([]);
     setActivePolylines([]);
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.name) return alert("Please enter a client name.");
-    setPlacedMarkerMode(true);
-    alert("Click on the map to place the marker.");
-  };
-
-  // resets icons
+  // defines how the markers look
   delete L.Icon.Default.prototype._getIconUrl;
-  // sets up icon displays
   L.Icon.Default.mergeOptions({
     iconRetinaUrl: markerIcon2x,
     iconUrl: markerIcon,
     shadowUrl: markerShadow,
   });
 
-  // all display happens here
+  // handles displays
   return (
     <div className="max-w-3xl mx-auto mt-10 p-6 bg-white shadow-lg rounded-xl text-gray-800">
       <h2 className="text-2xl font-bold mb-4 text-center">
@@ -182,73 +160,34 @@ export default function Mapping() {
 
       <div className="mb-6">
         <label className="block mb-2 text-blue-800 font-medium">
-          Search for an Individual
+          Select Client to Place Marker
         </label>
-        <div className="flex space-x-2">
-          <input
-            type="text"
-            value={searchName}
-            onChange={(e) => setSearchName(e.target.value)}
-            className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-400"
-            placeholder="Enter Name"
-          />
-          <button
-            onClick={() => loadClient(searchName.trim())}
-            className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700"
-          >
-            Search
-          </button>
-        </div>
+        <select
+          className="w-full p-2 border border-gray-300 rounded-md"
+          value={selectedClientId}
+          onChange={(e) => setSelectedClientId(e.target.value)}
+        >
+          <option value="">-- Select Client --</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.first_name} {c.last_name}
+            </option>
+          ))}
+        </select>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-3 mb-6">
-        <input
-          type="text"
-          value={formData.name}
-          onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-400"
-          placeholder="Client Name"
-          required
-        />
-        <input
-          type="number"
-          value={formData.age}
-          onChange={(e) => setFormData({ ...formData, age: e.target.value })}
-          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-400"
-          placeholder="Age"
-          required
-        />
-        <input
-          type="text"
-          value={formData.gender}
-          onChange={(e) => setFormData({ ...formData, gender: e.target.value })}
-          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-400"
-          placeholder="Gender"
-          required
-        />
-        <input
-          type="text"
-          value={formData.situation}
-          onChange={(e) =>
-            setFormData({ ...formData, situation: e.target.value })
-          }
-          className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-400"
-          placeholder="Client's Situation"
-          required
-        />
-        <button
-          type="submit"
-          className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
-        >
-          Place Marker
-        </button>
-      </form>
+      <button
+        onClick={() => setPlacedMarkerMode(true)}
+        className="bg-green-600 text-white px-4 py-2 rounded-md hover:bg-green-700"
+      >
+        Place Marker on Map
+      </button>
 
       <MapContainer
         center={defaultPosition}
         zoom={13}
         scrollWheelZoom={true}
-        className="h-[500px] w-full rounded-md shadow"
+        className="h-[500px] w-full rounded-md shadow mt-6"
       >
         <TileLayer
           attribution='&copy; <a href="https://osm.org">OpenStreetMap</a> contributors'
@@ -259,22 +198,32 @@ export default function Mapping() {
           onMapClick={handleMapClick}
           active={placedMarkerMode}
         />
-        {activeMarkers.map((m, idx) => (
-          <Marker position={[m.lat, m.lng]} key={idx}>
-            <Popup>
-              <strong>{m.name}</strong>
-              <br />
-              {m.age}, {m.gender}
-              <br />
-              {m.situation}
-              <br />
-              {new Date(m.timestamp).toLocaleString()}
-            </Popup>
-          </Marker>
-        ))}
+
+        {activeMarkers.map((m, idx) => {
+          // deals with how if a client is selected, then only show their markers
+          const client = clients.find((client) => client.id === m.client_id);
+          return (
+            <Marker position={[m.latitude, m.longitude]} key={idx}>
+              <Popup>
+                <strong>
+                  {client.first_name} {client.last_name}
+                </strong>
+                <br />
+                {new Date(m.timestamp).toLocaleString()}
+              </Popup>
+            </Marker>
+          );
+        })}
+
         {activePolylines.map((line, idx) => (
-          <Polyline key={idx} positions={line} color="blue" />
+          <Polyline key={idx} positions={line} color="blue" weight={4} />
         ))}
+
+        {selectedClientId && activeMarkers.length === 0 && (
+          <p className="text-center text-gray-500 mt-4">
+            No current marker data available for this client yet.
+          </p>
+        )}
       </MapContainer>
 
       <div className="flex justify-center mt-6">

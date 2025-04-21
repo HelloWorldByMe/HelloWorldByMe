@@ -1,47 +1,8 @@
-import { useState } from "react";
-
-// TODO eventually: implement backend API
-const initialData = {
-  "Bob McBobbison": {
-    age: 25,
-    gender: "M",
-    situation: "unemployed",
-    services: ["food", "substance", "housing"],
-    notes: [],
-  },
-  "Ur Mom": {
-    age: 56,
-    gender: "F",
-    situation: "homeless",
-    services: ["mental", "housing"],
-    notes: [],
-  },
-  "Jesse Richardson": {
-    age: 32,
-    gender: "N/A",
-    situation: "bipolar disorder",
-    services: ["mental", "substance"],
-    notes: [],
-  },
-  Susan: {
-    age: 45,
-    gender: "F",
-    situation: "single mother",
-    services: ["food", "housing"],
-    notes: [],
-  },
-  "Michael Horston": {
-    age: 65,
-    gender: "M",
-    situation: "substance abuse",
-    services: ["substance"],
-    notes: [],
-  },
-};
+import { useState, useEffect } from "react";
 
 export default function NavigatorForm() {
   // initializes data/states
-  const [data, setData] = useState(initialData);
+  const [data, setData] = useState({});
   const [searchTerm, setSearchTerm] = useState("");
   const [searchResult, setSearchResult] = useState(null);
   const [formVisible, setFormVisible] = useState(false);
@@ -49,19 +10,68 @@ export default function NavigatorForm() {
     name: "",
     age: "",
     gender: "",
-    situation: "",
+    veteran_stat: "",
+    num_of_kids: 0,
+    current_situation: "",
     services: [],
     notes: [],
   });
   const [note, setNote] = useState("");
+  const [filters, setFilters] = useState({ veteran_stat: "", num_of_kids: "" });
 
+  // will retrieve clients
+  useEffect(() => {
+    fetch("/api/clients").then((res) =>
+      res
+        .json()
+        .then((resData) => {
+          const findingClient = {};
+          resData.clients.forEach((client) => {
+            const full_name = `${client.first_name} ${client.last_name}`;
+            findingClient[full_name] = {
+              age: client.age,
+              gender: client.gender,
+              veteran_stat: client.veteran_stat,
+              num_of_kids: client.num_children,
+              current_situation: client.current_situation,
+              services: client.services,
+              notes: client.clientNotes,
+            };
+          });
+          setData(findingClient);
+        })
+        .catch((error) => {
+          console.error("Error fetching client data: ", error);
+        })
+    );
+  }, []);
   // search function
   const handleSearch = () => {
-    const person = data[searchTerm.trim()];
-    if (person) {
+    const search_name = searchTerm.trim().toLowerCase();
+
+    const filter_results = Object.entries(data).filter(([name, info]) => {
+      // checks if filters have any results
+      const name_match = name.toLowerCase().includes(search_name);
+      const vet_stat_match = filters.veteran_stat
+        ? info.veteran_stat === filters.veteran_stat
+        : true;
+      const kid_match =
+        filters.num_of_kids !== ""
+          ? info.num_of_kids === parseInt(filters.num_of_kids)
+          : true;
+
+      return name_match && vet_stat_match && kid_match;
+    });
+    // if results are found with filters, display it
+    if (filter_results.length > 0) {
+      const results = filter_results.map(([name, info]) => ({
+        ...info,
+        name,
+      }));
+      setSearchResult(results);
       setFormVisible(false);
-      setSearchResult({ ...person, name: searchTerm.trim() });
       setNote("");
+      // otherwise show an empty input form
     } else {
       setSearchResult(null);
       setFormVisible(true);
@@ -69,7 +79,9 @@ export default function NavigatorForm() {
         name: searchTerm.trim(),
         age: "",
         gender: "",
-        situation: "",
+        veteran_stat: "",
+        num_of_kids: 0,
+        current_situation: "",
         services: [],
         notes: [],
       });
@@ -77,39 +89,83 @@ export default function NavigatorForm() {
   };
 
   // function that handles the storage when data is submitted
-  const handleSubmit = () => {
-    const newData = {
-      ...data,
-      [formData.name]: { ...formData },
-    };
-    setData(newData);
-    localStorage.setItem(formData.name, JSON.stringify(formData));
-    setFormVisible(false);
-    setSearchResult({ ...formData });
-    alert("Information saved successfully!");
+  const handleSubmit = async () => {
+    const new_info = { ...formData };
+    console.log("Form data before submission: ", formData);
+
+    try {
+      const response = await fetch("api/clients", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          // make retrieved data parsable
+          name: formData.name,
+          age: formData.age,
+          gender: formData.gender,
+          veteran_stat: formData.veteran_stat,
+          num_of_kids: formData.num_of_kids,
+          current_situation: formData.current_situation,
+          services: formData.services,
+          notes: formData.notes,
+        }),
+      });
+
+      if (response.ok) {
+        const saved_info = await response.json();
+        alert("Client Successfully Saved!");
+        // reset form
+        setFormData({
+          name: "",
+          age: "",
+          gender: "",
+          veteran_stat: "",
+          num_of_kids: 0,
+          current_situation: "",
+          services: [],
+          notes: [],
+        });
+        setNote("");
+      } else {
+        alert("ERROR: Client not created");
+      }
+    } catch (error) {
+      alert("Something went wrong while submitting the navigator form");
+      console.error("Error creating client: ", error);
+    }
   };
 
   // allows additional notes as time goes by
-  const handleAddNote = () => {
+  const handleAddNote = (name) => {
     if (!note.trim()) return;
+
+    const person = data[name];
     const updated = {
       ...data,
-      [searchResult.name]: {
-        ...data[searchResult.name],
+      [name]: {
+        ...person,
         notes: [
-          ...data[searchResult.name].notes,
+          ...person.notes,
           `${new Date().toLocaleString()}: ${note.trim()}`,
         ],
       },
     };
     setData(updated);
     setNote("");
-    setSearchResult(updated[searchResult.name]);
-    localStorage.setItem(
-      searchResult.name,
-      JSON.stringify(updated[searchResult.name])
+    // searches up previous data (notes)
+    setSearchResult((prev) =>
+      Array.isArray(prev)
+        ? prev.map((p) => (p.name === name ? updated[name] : p))
+        : [{ ...updated[name] }]
     );
+
+    localStorage.setItem(name, JSON.stringify(updated[name]));
     alert("Note added successfully!");
+
+    setSearchTerm("");
+    setSearchResult(null);
+    setFormVisible(false);
   };
 
   // deals with service input toggle
@@ -126,7 +182,6 @@ export default function NavigatorForm() {
   return (
     <div className="max-w-3xl mx-auto mt-10 p-6 bg-white shadow-md rounded-lg">
       <h2 className="text-2xl font-bold mb-4 text-center">Navigator Form</h2>
-
       <div className="space-y-6">
         <h2 className="text-lg font-medium text-blue-800 mb-2">
           Search for an Individual
@@ -146,76 +201,171 @@ export default function NavigatorForm() {
             Search
           </button>
         </div>
+        <div className="flex flex-wrap gap-2 mt-4">
+          <select
+            className="p-2 border border-gray-300 rounded-md"
+            value={filters.veteran_stat}
+            onChange={(e) =>
+              setFilters({ ...filters, veteran_stat: e.target.value })
+            }
+          >
+            <option value="">All Veteran Statuses</option>
+            <option value="not a veteran">Not a Veteran</option>
+            <option value="active duty">Active Duty</option>
+            <option value="retired">Retired</option>
+          </select>
+
+          <input
+            type="number"
+            min="0"
+            className="p-2 border border-gray-300 rounded-md"
+            placeholder="Number of Kids"
+            value={filters.num_of_kids}
+            onChange={(e) =>
+              setFilters({ ...filters, num_of_kids: e.target.value })
+            }
+          ></input>
+        </div>
       </div>
-
-      {searchResult && (
-        <div className="mt-6 text-gray-800">
-          <p>
-            <strong>Name:</strong> {searchTerm}
-          </p>
-          <p>
-            <strong>Age:</strong> {searchResult.age}
-          </p>
-          <p>
-            <strong>Gender:</strong> {searchResult.gender}
-          </p>
-          <p>
-            <strong>Services Needed:</strong> {searchResult.services.join(", ")}
-          </p>
-          <p>
-            <strong>Current Situation:</strong> {searchResult.situation}
-          </p>
-
-          {searchResult.notes?.length > 0 && (
-            <div className="mt-4">
-              <h3 className="font-bold">Additional Notes</h3>
-              <ul className="list-disc list-inside">
-                {searchResult.notes.map((n, i) => (
-                  <li key={i}>{n}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div className="mt-4 bg-gray-200 rounded-lg p-4 shadow-md">
-            <textarea
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Additional Notes"
-              className="w-full p-2 border border-gray-300 rounded-md mb-2"
-            />
-            <button
-              onClick={handleAddNote}
-              className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
+      {Array.isArray(searchResult) && (
+        <div className="mt-6 space-y-6">
+          {searchResult.map((person, index) => (
+            <div
+              key={index}
+              className="p-4 border border-gray-300 rounded-md shadow-sm bg-gray-50"
             >
-              Add Note
-            </button>
-          </div>
+              <p>
+                <strong>Name:</strong> {person.name}
+              </p>
+              <p>
+                <strong>Age:</strong> {person.age}
+              </p>
+              <p>
+                <strong>Gender:</strong> {person.gender}
+              </p>
+              <p>
+                <strong>Veteran Status:</strong> {person.veteran_stat}
+              </p>
+              <p>
+                <strong>Number of Kids:</strong> {person.num_of_kids}
+              </p>
+              <p>
+                <strong>Services Needed:</strong> {person.services.join(", ")}
+              </p>
+              <p>
+                <strong>Current Situation:</strong> {person.current_situation}
+              </p>
+              {person.notes.length > 0 && (
+                <div>
+                  <h3 className="font-semibold mt-2">Notes</h3>
+                  <ul className="list-disc list-inside">
+                    {person.notes.map((note, indx) => (
+                      <li key={indx}>
+                        <strong>{note.name}</strong> (
+                        {new Date(note.created_at).toLocaleString()}):{" "}
+                        {note.note}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <div className="mt-4 bg-gray-200 rounded-lg p-4 shadow-md">
+                <textarea
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="Additional Notes"
+                  className="w-full p-2 border border-gray-300 rounded-md mb-2"
+                />
+                <button
+                  onClick={() => handleAddNote(person.name)}
+                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
+                >
+                  Add Note
+                </button>
+              </div>
+            </div>
+          ))}
         </div>
       )}
 
       {formVisible && (
         <div className="mt-6">
           <h2 className="text-lg font-medium mb-2">Enter Information</h2>
-          {["Name", "Age", "Gender", "Current Situation"].map((field) => (
-            <div
-              key={field}
-              className="bg-gray-200 rounded-lg p-4 shadow-md mb-4"
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <input
+              type="text"
+              placeholder="Name"
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.name}
+              onChange={(e) =>
+                setFormData({ ...formData, name: e.target.value })
+              }
+            />
+          </div>
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <input
+              type="number"
+              placeholder="Age"
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.age}
+              onChange={(e) =>
+                setFormData({ ...formData, age: e.target.value })
+              }
+            />
+          </div>
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <input
+              type="text"
+              placeholder="Gender"
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.gender}
+              onChange={(e) =>
+                setFormData({ ...formData, gender: e.target.value })
+              }
+            />
+          </div>
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <input
+              type="number"
+              placeholder="Number of Kids"
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.num_of_kids}
+              onChange={(e) =>
+                setFormData({
+                  ...formData,
+                  num_of_kids: Number(e.target.value),
+                })
+              }
+            />
+          </div>
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <input
+              type="text"
+              placeholder="Current Situation"
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.current_situation}
+              onChange={(e) =>
+                setFormData({ ...formData, current_situation: e.target.value })
+              }
+            />
+          </div>
+
+          <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
+            <h3 className="font-semibold mb-2">Veteran Status</h3>
+            <select
+              className="w-full p-2 border border-gray-300 rounded-lg"
+              value={formData.veteran_stat}
+              onChange={(e) =>
+                setFormData({ ...formData, veteran_stat: e.target.value })
+              }
             >
-              <input
-                type="text"
-                placeholder={field}
-                className="w-full p-2 border border-gray-300 rounded-lg"
-                value={formData[field.toLowerCase().replace(" ", "")]}
-                onChange={(e) =>
-                  setFormData({
-                    ...formData,
-                    [field.toLowerCase().replace(" ", "")]: e.target.value,
-                  })
-                }
-              />
-            </div>
-          ))}
+              <option value="">Select Status</option>
+              <option value="not a veteran">Not a Veteran</option>
+              <option value="active duty">Active Duty</option>
+              <option value="retired">Retired</option>
+            </select>
+          </div>
 
           <div className="bg-gray-200 rounded-lg p-4 shadow-md mb-4">
             <h3 className="font-semibold mb-2">Services Needed</h3>
