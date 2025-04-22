@@ -11,7 +11,7 @@ const Messages = () => {
     const [searchQuery, setSearchQuery] = useState("");
     const [searchResults, setSearchResults] = useState([]);
 
-    const [roleSearchQuery, setRoleSearchQuery] = useState("");
+    //const [roleSearchQuery, setRoleSearchQuery] = useState("");
     const [roleSearchResults, setRoleSearchResults] = useState([]);
 
     const [selectedUser, setSelectedUser] = useState(null);
@@ -25,7 +25,7 @@ const Messages = () => {
     const userId = localStorage.getItem("user_id");
 
     const [selectedUsers, setSelectedUsers] = useState([]);
-    const [groupSearchQuery, setGroupSearchQuery] = useState("");
+    //const [groupSearchQuery, setGroupSearchQuery] = useState("");
     const [groupSearchResults, setGroupSearchResults] = useState([]);
 
     const [newGroupName, setNewGroupName] = useState("");
@@ -58,7 +58,7 @@ const Messages = () => {
             } catch (err) {
                 console.error("Failed to fetch users by role:", err);
             } 
-        } // TODO figure out why there isn't a ';' here
+        }
 
         // call functions
         fetchUsersByRole();
@@ -108,12 +108,6 @@ const Messages = () => {
             const allMessages = [...individualMessages, ...groupMessages];
             const groupedThreads = {};
 
-            // console.log("💬 All messages fetched:", allMessages.map(m => ({
-            //     id: m.id,
-            //     sender: m.sender,
-            //     is_read: m.is_read
-            // })));      
-
             // group messages into proper threads
             allMessages.forEach((msg) => {
                 const key = msg.group_id
@@ -133,9 +127,7 @@ const Messages = () => {
             const threadList = Object.entries(groupedThreads).map(([threadId, messages]) => {
                 const total = messages.length;
                 const unread = messages.filter((msg) => !msg.is_read && msg.sender !== userId).length;
-            
-                //console.log(`🧵 ${threadId} → ${total} total, ${unread} unread`);
-            
+                        
                 return {
                 userId: threadId,
                 messages: messages
@@ -151,10 +143,6 @@ const Messages = () => {
 
             setThreads(threadList);
 
-            // console.log("🧵 Threads:", threadList.map(t => ({
-            //     userId: t.userId,
-            //     messageCount: t.messages.length
-            // })));
         } catch (err) {
             console.error("Error fetching messages:", err);
         }
@@ -177,73 +165,23 @@ const Messages = () => {
         }
     };
 
-// const fetchGroupMessages = async (group_id) => {
-//     try {
-//     const res = await axios.get(`/messages/group/${group_id}`);
-//     return res.data;
-//     } catch (err) {
-//     console.error("Failed to fetch group messages:", err);
-//     return [];
-//     }
-// };  
-
-// const handleRoleSearch = async (query) => {
-//     //console.log("Searching roles for:", query); // <--- Add this
-
-//     setRoleSearchQuery(query);
-//     setError("");
-
-//     if (query.length > 2) {
-//     try {
-//         const response = await axios.get(`/api/users/rolesearch?role=${query}`);
-//         setRoleSearchResults(response.data.users);
-//     } catch (error) {
-//         console.error("Error searching users:", error);
-//     }
-//     } else {
-//     setRoleSearchResults([]);
-//     }
-// };
-
     // select users to send to 
     const handleUserSelect = (user) => {
         if (messageMode === "group") {
         if (!selectedUsers.some((u) => u.user_id === user.user_id)) {
             setSelectedUsers((prev) => [...prev, user]);
         }
-        setGroupSearchQuery("");
+        //setGroupSearchQuery("");
         setGroupSearchResults([]);
         } else if (messageMode === "individual" || messageMode === "role") {
         setSelectedUser(user);
         setSearchQuery(user.name);  // works for both name and role
-        setRoleSearchQuery("");     // clear role search field too
+        //setRoleSearchQuery("");     // clear role search field too
         setSearchResults([]);
         setRoleSearchResults([]);
         setError("");
         }
     };  
-
-// const selectUserForMessage = (user) => {
-//     if (messageMode === "group") {
-//         if (!selectedUsers.some((u) => u.user_id === user.user_id)) {
-//             setSelectedUsers((prev) => [...prev, user]);
-//         }          
-//     setGroupSearchQuery("");
-//     setGroupSearchResults([]);
-//     } else {
-//     setSelectedUser(user);
-//     setSearchQuery(user.name);
-//     setSearchResults([]);
-//     setError("");
-//     }
-// };  
-
-// const selectRoleUserForMessage = (user) => {
-//     setSelectedUser(user);
-//     setRoleSearchQuery(user.name);
-//     setRoleSearchResults([]);
-//     setError("");
-// };
 
     // function to handle sending messages
     const sendMessage = async ({ contentOverride = null, targetUserId = null, targetGroupId = null } = {}) => {
@@ -738,7 +676,7 @@ const Messages = () => {
                             if (!selectedUsers.includes(user.user_id)) {
                                 setSelectedUsers([...selectedUsers, user.user_id]);
                             }
-                                setGroupSearchQuery("");
+                                //setGroupSearchQuery("");
                                 setGroupSearchResults([]);
                             }}
                             style={{ cursor: "pointer" }}

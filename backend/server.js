@@ -383,16 +383,9 @@ app.get("/api/groups/name/:groupName", async (req, res) => {
     const { name, members } = req.body;
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) return res.status(401).json({ error: "Unauthorized" });
-  
-    console.log("➡️ Creating group with name:", name);
-    console.log("➡️ Members:", members);
-
 
     try {
-      const decoded = jwt.verify(token, JWT_SECRET);
-
-      console.log("➡️ Created by:", decoded.user_id);
-  
+      const decoded = jwt.verify(token, JWT_SECRET);  
       const result = await pool.query(
         "INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id",
         [name, decoded.user_id]
@@ -513,8 +506,6 @@ app.put("/api/messages/:id/read", async (req, res) => {
         req.params.id,
       ]);
       
-      console.log("🔁 Update result:", result.rowCount);
-
     res.json({ success: true });
   } catch (err) {
     console.error("Mark as read error:", err);
