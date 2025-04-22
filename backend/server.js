@@ -156,9 +156,13 @@ app.get("/messages/inbox", async (req, res) => {
     const user_id = decoded.user_id;
 
     const messagesQuery = await pool.query(
-      "SELECT id, sender, content, timestamp FROM messages WHERE receiver = $1 ORDER BY timestamp DESC",
-      [user_id]
-    );
+        `SELECT id, sender, receiver, group_id, content, timestamp, is_read 
+         FROM messages 
+         WHERE receiver = $1 OR sender = $1 
+         ORDER BY timestamp DESC`,
+        [user_id]
+      );
+      
 
     res.json({ messages: messagesQuery.rows || [] });
   } catch (error) {
@@ -219,26 +223,26 @@ app.get("/messages/waiting-for-reply", async (req, res) => {
 });
 
 app.post("/messages", async (req, res) => {
-  const { sender, receiver, content } = req.body;
-
-  if (!sender || !receiver || !content) {
-    return res
-      .status(400)
-      .json({ error: "sender, receiver, and content are required." });
-  }
-
-  try {
-    await pool.query(
-      "INSERT INTO messages (sender, receiver, content, timestamp) VALUES ($1, $2, $3, NOW())",
-      [sender, receiver, content]
-    );
-
-    res.json({ success: true, message: "Message sent successfully!" });
-  } catch (error) {
-    console.error("Send Message Error:", error);
-    res.status(500).json({ error: "Error sending message" });
-  }
-});
+    const { sender, receiver, content } = req.body;
+  
+    if (!sender || !receiver || !content) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+  
+    try {
+      const result = await pool.query(
+        `INSERT INTO messages (sender, receiver, content, timestamp)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING *`,
+        [sender, receiver, content]
+      );
+  
+      res.json(result.rows[0]);  // ✅ return the inserted message
+    } catch (err) {
+      console.error("Failed to send message:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });  
 
 app.delete("/api/messages/delete/:message_id", async (req, res) => {
   const { message_id } = req.params;
@@ -268,6 +272,171 @@ app.get("/api/users/search", async (req, res) => {
   }
 });
 
+app.get("/api/users/rolesearch", async (req, res) => {
+    const { role } = req.query;
+
+    try {
+    const result = await pool.query(
+        `SELECT DISTINCT u.user_id, u.name, u.email
+        FROM users u
+        JOIN organization_members om ON u.user_id = om.user_id
+        WHERE om.role = $1`,
+        [role]
+        );
+  
+      res.json({ users: result.rows || [] });
+    } catch (error) {
+      console.error("User Search Error:", error);
+      res.status(500).json({ error: "Error searching for users" });
+    }
+  });
+
+  app.get("/api/roles", async (req, res) => {
+    try {
+      const result = await pool.query(
+        `SELECT DISTINCT role FROM organization_members`
+      );
+      const roles = result.rows.map((row) => row.role);
+      res.json({ roles });
+    } catch (error) {
+      console.error("Error fetching roles:", error);
+      res.status(500).json({ error: "Failed to fetch roles" });
+    }
+  });
+
+app.get("/api/groups/name/:groupName", async (req, res) => {
+    const groupName = req.params.groupName;
+  
+    try {
+      const result = await pool.query(
+        "SELECT id, name FROM groups WHERE name = $1",
+        [groupName]
+      );
+  
+      if (result.rows.length > 0) {
+        res.json(result.rows[0]);
+      } else {
+        res.status(404).json({ error: "Group not found" });
+      }
+    } catch (err) {
+      console.error("Error checking for existing group:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });  
+
+  app.get("/messages/group/:group_id", async (req, res) => {
+    const groupId = req.params.group_id;
+    try {
+      const result = await pool.query(
+        "SELECT * FROM messages WHERE group_id = $1 ORDER BY timestamp",
+        [groupId]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      console.error("Error fetching group messages:", err);
+      res.status(500).send("Internal server error");
+    }
+  });
+  
+  app.post("/messages/group", async (req, res) => {
+    const { sender, content, group_id } = req.body;
+  
+    if (!sender || !content || !group_id) {
+      return res.status(400).json({ error: "Missing required fields" });
+    }
+  
+    try {
+      const result = await pool.query(
+        `INSERT INTO messages (sender, group_id, content, timestamp)
+         VALUES ($1, $2, $3, NOW())
+         RETURNING *`,
+        [sender, group_id, content]
+      );
+  
+      res.json(result.rows[0]);  // ✅ return the inserted message
+    } catch (err) {
+      console.error("Failed to send group message:", err);
+      res.status(500).json({ error: "Server error" });
+    }
+  });
+  
+
+  app.get("/api/users/me/groups", async (req, res) => {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+  
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+      const result = await pool.query(
+        `SELECT g.id, g.name FROM groups g
+         JOIN group_members gm ON g.id = gm.group_id
+         WHERE gm.user_id = $1`,
+        [decoded.user_id]
+      );
+      res.json(result.rows);
+    } catch (err) {
+      res.status(500).json({ error: "Failed to get groups" });
+    }
+  });  
+
+  app.post("/api/groups", async (req, res) => {
+    const { name, members } = req.body;
+    const token = req.headers.authorization?.split(" ")[1];
+    if (!token) return res.status(401).json({ error: "Unauthorized" });
+  
+    console.log("➡️ Creating group with name:", name);
+    console.log("➡️ Members:", members);
+
+
+    try {
+      const decoded = jwt.verify(token, JWT_SECRET);
+
+      console.log("➡️ Created by:", decoded.user_id);
+  
+      const result = await pool.query(
+        "INSERT INTO groups (name, created_by) VALUES ($1, $2) RETURNING id",
+        [name, decoded.user_id]
+      );
+  
+      const groupId = result.rows[0].id;
+  
+      for (const member of members) {
+        await pool.query(
+          "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [groupId, member.user_id]
+        );
+      }
+  
+      res.json({ id: groupId });
+    } catch (err) {
+        console.error("❌ Group creation failed:", err.message, err.stack);
+        res.status(500).json({ error: "Group creation failed" });
+    }      
+  });  
+
+app.put("/api/groups/:id/members", async (req, res) => {
+    const groupId = req.params.id;
+    const { members } = req.body;
+  
+    try {
+      // First, delete all existing members
+      await pool.query("DELETE FROM group_members WHERE group_id = $1", [groupId]);
+  
+      // Then, re-insert the new members
+      for (const member of members) {
+        await pool.query(
+          "INSERT INTO group_members (group_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+          [groupId, member.user_id]
+        );
+      }
+  
+      res.json({ message: "Group members updated" });
+    } catch (err) {
+      console.error("❌ Failed to update group members:", err);
+      res.status(500).json({ error: "Failed to update group members" });
+    }
+  });  
+
 app.post("/api/organizations", async (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
   if (!token) return res.status(401).json({ error: "Unauthorized" });
@@ -296,27 +465,56 @@ app.post("/api/organizations", async (req, res) => {
 });
 
 app.get("/messages/unread-count", async (req, res) => {
-  const token = req.headers.authorization?.split(" ")[1];
-  if (!token) return res.status(401).json({ error: "Unauthorized" });
+    try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) return res.status(401).json({ error: "Unauthorized" });
 
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET);
-    const result = await pool.query(
-      "SELECT COUNT(*) FROM messages WHERE receiver = $1 AND is_read = FALSE",
-      [decoded.user_id]
-    );
-    res.json({ count: parseInt(result.rows[0].count, 10) });
-  } catch (error) {
-    console.error("Unread count error:", error);
-    res.status(500).json({ error: "Failed to fetch unread count" });
-  }
-});
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const userId = decoded.user_id;
+  
+      // Count unread individual messages
+      const indRes = await pool.query(
+        `SELECT COUNT(*) FROM messages
+         WHERE receiver = $1 AND is_read = false`,
+        [userId]
+      );
+  
+      // Get group IDs the user is in
+      const groupRes = await pool.query(
+        `SELECT group_id FROM group_members WHERE user_id = $1`,
+        [userId]
+      );
+      const groupIds = groupRes.rows.map((r) => r.group_id);
+  
+      let groupCount = 0;
+      if (groupIds.length > 0) {
+        const placeholders = groupIds.map((_, i) => `$${i + 2}`).join(", ");
+        const groupMsgRes = await pool.query(
+          `SELECT COUNT(*) FROM messages
+           WHERE group_id IN (${placeholders})
+           AND sender <> $1 AND is_read = false`,
+          [userId, ...groupIds]
+        );
+        groupCount = parseInt(groupMsgRes.rows[0].count, 10);
+      }
+  
+      const individualCount = parseInt(indRes.rows[0].count, 10);
+      res.json({ count: individualCount + groupCount });
+  
+    } catch (err) {
+      console.error("Failed to fetch unread count:", err);
+      res.status(500).json({ error: "Failed to fetch unread count" });
+    }
+  });  
 
 app.put("/api/messages/:id/read", async (req, res) => {
   try {
-    await pool.query("UPDATE messages SET is_read = TRUE WHERE id = $1", [
-      req.params.id,
-    ]);
+    const result = await pool.query("UPDATE messages SET is_read = TRUE WHERE id = $1", [
+        req.params.id,
+      ]);
+      
+      console.log("🔁 Update result:", result.rowCount);
+
     res.json({ success: true });
   } catch (err) {
     console.error("Mark as read error:", err);
