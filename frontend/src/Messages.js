@@ -4,6 +4,30 @@ import axios from "axios";
 import Layout from "./Layout";
 import "./styles.css";
 
+async function apiFetch(path, method = "GET", body = null, token = null)
+{
+    const headers = {};
+  
+    if (body) headers["Content-Type"] = "application/json";
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+  
+    const res = await fetch(`api/${path}`, {
+      method,
+      headers,
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  
+    if (!res.ok) {
+      throw new Error(`HTTP error! status: ${res.status}`);
+    }
+  
+    try {
+      return await res.json();
+    } catch {
+      return null;
+    }
+}  
+
 const Messages = () => {
     // variables
     const [selectedMessage, setSelectedMessage] = useState(null);
@@ -39,9 +63,8 @@ const Messages = () => {
         // fetch which roles are currently in the database
         const fetchRoles = async () => {
             try {
-                const res = await fetch("/api/roles");
-                const data = await res.json();
-            setAvailableRoles(data.roles || []);
+                const data = await apiFetch("roles");
+                setAvailableRoles(data.roles || []);
             } catch (err) {
                 console.error("Failed to load roles:", err);
             }
@@ -52,8 +75,7 @@ const Messages = () => {
             if (!selectedRole) return;
 
             try {
-                const res = await fetch(`/api/users/rolesearch?role=${selectedRole}`);
-                const data = await res.json();
+                const data = await apiFetch(`users/rolesearch?role=${selectedRole}`);
                 setRoleSearchResults(data.users || []);
             } catch (err) {
                 console.error("Failed to fetch users by role:", err);
@@ -75,18 +97,12 @@ const Messages = () => {
 
         try {
             // get inidviual message threads
-            const individualRes = await axios.get("/messages/inbox", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+            const individualRes = await apiFetch("messages/inbox", "GET", null, token);             
             
-            const individualMessages = individualRes.data.messages;
+            const individualMessages = individualRes.messages;
 
             // fetch group info (id + name)
-            const groupRes = await axios.get("/api/users/me/groups", {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            const groups = groupRes.data;
+            const groups = await apiFetch("users/me/groups", "GET", null, token);
 
             // save group_id → name mapping
             const groupMapTemp = {};
@@ -100,11 +116,10 @@ const Messages = () => {
             // fetch messages from each group
             const groupMessages = [];
             for (const group of groups) {
-                const res = await axios.get(`/messages/group/${group.id}`);
-                groupMessages.push(...res.data);
+                const groupData = await apiFetch(`messages/group/${group.id}`);
+                groupMessages.push(...groupData);
             }
 
-            // get all messages for a particular user
             const allMessages = [...individualMessages, ...groupMessages];
             const groupedThreads = {};
 
@@ -155,8 +170,8 @@ const Messages = () => {
 
         if (query.length > 2) {
         try {
-            const response = await axios.get(`/api/users/search?query=${query}`);
-            setSearchResults(response.data.users);
+            const data = await apiFetch(`users/search?query=${query}`);
+            setSearchResults(data.users);
         } catch (error) {
             console.error("Error searching users:", error);
         }
@@ -199,20 +214,20 @@ const Messages = () => {
         // CASE 1: Reply to an existing group
         if (targetGroupId) {
             try {
-                await axios.post("/messages/group", {
-                sender,
-                content,
-                group_id: targetGroupId
-                });
+                await apiFetch("messages/group", "POST", {
+                    sender,
+                    content,
+                    group_id: targetGroupId,
+                  });
+                  
+                  await fetchMessages(); // refresh from server                               
 
-                await fetchMessages();  // refresh from server
-
-                if (contentOverride) {
-                setReplyMessages((prev) => ({ ...prev, [`group-${targetGroupId}`]: "" }));
-                } else {
-                setNewMessage("");
-                setSelectedUser(null);
-                }
+                    if (contentOverride) {
+                        setReplyMessages((prev) => ({ ...prev, [`group-${targetGroupId}`]: "" }));
+                    } else {
+                        setNewMessage("");
+                        setSelectedUser(null);
+                    }
 
                 return;
             } catch (err) {
@@ -236,12 +251,8 @@ const Messages = () => {
         
             // STEP 1: Try to get the group by name
             try {
-            const res = await axios.get(`/api/groups/name/${groupName}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
-
-            group_id = res.data?.id;
-
+                const groupData = await apiFetch(`groups/name/${groupName}`, "GET", null, token);
+                group_id = groupData?.id;
             } catch (err) {
                 if (err.response?.status === 404) {
                     //console.log("Group not found, will create it.");
@@ -255,54 +266,43 @@ const Messages = () => {
         
             // STEP 2: Fetch users with this role
             try {
-            const userRes = await axios.get(`/api/users/rolesearch?role=${role}`, {
-                headers: { Authorization: `Bearer ${token}` }
-            });
+                const userData = await apiFetch(`users/rolesearch?role=${role}`, "GET", null, token);
+                let members = userData.users || [];
+            
+                // Always include the sender
+                if (!members.some(u => u.user_id === userId)) {
+                    members.push({ user_id: userId });
+                }
+            
+                // STEP 3: Reuse or create group
+                if (group_id) {
+                    await apiFetch(`groups/${group_id}/members`, "PUT", { members }, token);
+                } else {
+                    await apiFetch("groups", "POST", { name: groupName, members }, token);                
+                    const createData = await createRes.json();
+                    group_id = createData.id;
+                }              
         
-            let members = userRes.data.users || [];
-        
-            // Always include the sender
-            if (!members.some(u => u.user_id === userId)) {
-                members.push({ user_id: userId });
-            }
-        
-            // STEP 3: Reuse or create group
-            if (group_id) {
-                await axios.put(`/api/groups/${group_id}/members`, {
-                members
-                }, {
-                headers: { Authorization: `Bearer ${token}` }
-                });
-            } else {
-                const groupRes = await axios.post("/api/groups", {
-                name: groupName,
-                members
-                }, {
-                headers: { Authorization: `Bearer ${token}` }
-                });
-                group_id = groupRes.data.id;
-            }
-        
-            // STEP 4: Send message to group
-            await axios.post("/messages/group", {
-                sender: userId,
-                content,
-                group_id
-            });
-        
-            // reload from database
-            await fetchMessages();
-        
-            if (contentOverride) {
-                setReplyMessages((prev) => ({ ...prev, [`group-${group_id}`]: "" }));
-            } else {
-                setNewMessage("");
-                setSelectedUser(null);
-                setSelectedRole("");
-                setRoleSearchResults([]);
-            }
-        
-            return;
+                // STEP 4: Send message to group
+                await apiFetch("messages/group", "POST", {
+                    sender: userId,
+                    content,
+                    group_id
+                });              
+            
+                // reload from database
+                await fetchMessages();
+            
+                if (contentOverride) {
+                    setReplyMessages((prev) => ({ ...prev, [`group-${group_id}`]: "" }));
+                } else {
+                    setNewMessage("");
+                    setSelectedUser(null);
+                    setSelectedRole("");
+                    setRoleSearchResults([]);
+                }
+            
+                return;
             } catch (err) {
                 console.error("❌ Failed to send role-based message:", err);
                 setError("Could not send role-based message.");
@@ -324,22 +324,16 @@ const Messages = () => {
             }
 
             try {
-                const groupRes = await axios.post("/api/groups", {
-                name: groupName,
-                members
-                }, {
-                    headers: { Authorization: `Bearer ${token}` }
+                const groupData = await apiFetch("groups", "POST", { name: groupName, members }, token);
+                const group_id = groupData.id;
+              
+                await apiFetch("messages/group", "POST", {
+                  sender,
+                  content,
+                  group_id
                 });
-
-                const group_id = groupRes.data.id;
-
-                await axios.post("/messages/group", {
-                    sender,
-                    content,
-                    group_id
-                });
-
-                await fetchMessages();  // 🔄 refresh from server
+              
+                await fetchMessages();  // refresh from server              
 
                 if (contentOverride) {
                     setReplyMessages((prev) => ({ ...prev, [`group-${group_id}`]: "" }));
@@ -365,20 +359,19 @@ const Messages = () => {
         }
 
         try {
-        await axios.post("/messages", {
-            sender,
-            receiver,
-            content
-        });
+            await apiFetch("messages", "POST", {
+                sender,
+                receiver,
+                content
+              });              
+            await fetchMessages();  // refresh from server
 
-        await fetchMessages();  // refresh from server
-
-        if (contentOverride) {
-            setReplyMessages((prev) => ({ ...prev, [receiver]: "" }));
-        } else {
-            setNewMessage("");
-            setSelectedUser(null);
-        }
+            if (contentOverride) {
+                setReplyMessages((prev) => ({ ...prev, [receiver]: "" }));
+            } else {
+                setNewMessage("");
+                setSelectedUser(null);
+            }
         } catch (err) {
             console.error("❌ Failed to send individual message:", err);
             setError("Could not send individual message.");
@@ -388,19 +381,19 @@ const Messages = () => {
     // delete message from database
     const deleteMessage = async (id) => {
         try {
-        await axios.delete(`/api/messages/delete/${id}`);
+            await apiFetch(`messages/delete/${id}`, "DELETE");
 
-        // Remove message from threads state
-        const updatedThreads = threads
-            .map((thread) => {
-            return {
-                ...thread,
-                messages: thread.messages.filter((m) => m.id !== id),
-            };
-            })
-            .filter((thread) => thread.messages.length > 0); // Optionally remove empty threads
+            // Remove message from threads state
+            const updatedThreads = threads
+                .map((thread) => {
+                return {
+                    ...thread,
+                    messages: thread.messages.filter((m) => m.id !== id),
+                };
+                })
+                .filter((thread) => thread.messages.length > 0); // Optionally remove empty threads
 
-        setThreads(updatedThreads);
+            setThreads(updatedThreads);
         } catch (err) {
             console.error("Delete failed:", err);
             alert("Failed to delete message");
@@ -410,25 +403,19 @@ const Messages = () => {
     // archive message
     const archiveMessage = async (id) => {
         try {
-        await axios.put(
-            `/api/messages/archive/${id}`,
-            {},
-            {
-            headers: { Authorization: `Bearer ${token}` },
-            }
-        );
+            await apiFetch(`messages/archive/${id}`, "PUT", {}, token);
 
-        // Remove archived message from threads
-        const updatedThreads = threads
-            .map((thread) => {
-            return {
-                ...thread,
-                messages: thread.messages.filter((m) => m.id !== id),
-            };
-            })
-            .filter((thread) => thread.messages.length > 0); // Clean up empty threads
+            // Remove archived message from threads
+            const updatedThreads = threads
+                .map((thread) => {
+                return {
+                    ...thread,
+                    messages: thread.messages.filter((m) => m.id !== id),
+                };
+                })
+                .filter((thread) => thread.messages.length > 0); // Clean up empty threads
 
-        setThreads(updatedThreads);
+            setThreads(updatedThreads);
         } catch (err) {
             console.error("Failed to archive message:", err);
             alert("Failed to archive message");
@@ -438,11 +425,9 @@ const Messages = () => {
     // mark message as read
     const markMessageAsRead = async (messageId) => {
         try {
-        await fetch(`/api/messages/${messageId}/read`, {
-            method: "PUT"
-        });
+            await apiFetch(`messages/${messageId}/read`, "PUT");
         } catch (error) {
-        console.error("Failed to mark message as read:", error);
+            console.error("Failed to mark message as read:", error);
         }
     };  
 
@@ -752,17 +737,15 @@ const Messages = () => {
                 
                     for (const msg of unreadMessages) {
                         try {
-                        await axios.put(`/api/messages/${msg.id}/read`, {}, {
-                            headers: { Authorization: `Bearer ${token}` }
-                        });
+                            await apiFetch(`messages/${messageId}/read`, "PUT");
                     
-                        // Update it locally
-                        const target = updated[index].messages.find(m => m.id === msg.id);
-                        if (target) target.is_read = true;
-                    
-                        updated[index].unreadCount -= 1;
+                            // Update it locally
+                            const target = updated[index].messages.find(m => m.id === msg.id);
+                            if (target) target.is_read = true;
+                        
+                            updated[index].unreadCount -= 1;
                         } catch (err) {
-                        console.error("Failed to mark message as read:", err);
+                            console.error("Failed to mark message as read:", err);
                         }
                     }                      
                     }
