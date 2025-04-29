@@ -29,6 +29,7 @@ export default function NavigatorForm() {
           resData.clients.forEach((client) => {
             const full_name = `${client.first_name} ${client.last_name}`;
             findingClient[full_name] = {
+              id: client.id,
               age: client.age,
               gender: client.gender,
               veteran_stat: client.veteran_stat,
@@ -136,36 +137,62 @@ export default function NavigatorForm() {
     }
   };
 
-  // allows additional notes as time goes by
-  const handleAddNote = (name) => {
+  const handleAddNote = async (name) => {
     if (!note.trim()) return;
+    console.log("Note to insert:", note);
 
-    const person = data[name];
-    const updated = {
-      ...data,
-      [name]: {
-        ...person,
-        notes: [
-          ...person.notes,
-          `${new Date().toLocaleString()}: ${note.trim()}`,
-        ],
-      },
-    };
-    setData(updated);
-    setNote("");
-    // searches up previous data (notes)
-    setSearchResult((prev) =>
-      Array.isArray(prev)
-        ? prev.map((p) => (p.name === name ? updated[name] : p))
-        : [{ ...updated[name] }]
-    );
+    const client = data[name];
+    console.log("current client: ", client);
+    const timestampedNote = `${note.trim()}`;
 
-    localStorage.setItem(name, JSON.stringify(updated[name]));
-    alert("Note added successfully!");
+    try {
+      const response = await fetch("/api/notes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          client_id: client.id,
+          user_id: localStorage.user_id,
+          note: timestampedNote,
+        }),
+      });
 
-    setSearchTerm("");
-    setSearchResult(null);
-    setFormVisible(false);
+      console.log("current client_id: ", client);
+
+      if (!response.ok) {
+        throw new Error("Failed to add note");
+      }
+
+      const updatedClient = await response.json();
+
+      setData((prevData) => ({
+        ...prevData,
+        [name]: {
+          ...prevData[name],
+          notes: [...prevData[name].notes, updatedClient.note.note],
+        },
+      }));
+
+      setSearchResult((prev) =>
+        Array.isArray(prev)
+          ? prev.map((p) =>
+              p.name === name
+                ? { ...p, notes: [...p.notes, updatedClient.note.note] }
+                : p
+            )
+          : [{ ...updatedClient }]
+      );
+
+      alert("Note added successfully!");
+      setNote("");
+      setSearchTerm("");
+      setSearchResult(null);
+      setFormVisible(false);
+    } catch (error) {
+      console.error("Error adding note: ", error);
+      alert("Failed to add note. Please try again.");
+    }
   };
 
   // deals with service input toggle

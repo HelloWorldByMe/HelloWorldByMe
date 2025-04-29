@@ -1072,6 +1072,23 @@ app.get("/api/restrictions", async (req, res) => {
   }
 });
 
+app.post("/api/notes", async (req, res) => {
+  const { client_id, note, user_id } = req.body; // notice added user_id
+
+  try {
+    const result = await pool.query(
+      `INSERT INTO notes (client_id, user_id, note, created_at)
+       VALUES ($1, $2, $3, NOW())
+       RETURNING *`,
+      [client_id, user_id, note] // also added user_id in parameters
+    );
+    res.json({ note: result.rows[0] });
+  } catch (err) {
+    console.error("Error inserting note:", err);
+    res.status(500).send("Error inserting note");
+  }
+});
+
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, "0.0.0.0", () =>
   console.log(`Server running on port ${PORT}`)
