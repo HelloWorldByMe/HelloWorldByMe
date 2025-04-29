@@ -16,7 +16,7 @@ export default function NavigatorForm() {
     services: [],
     notes: [],
   });
-  const [note, setNote] = useState("");
+  const [notes, setNotes] = useState({});
   const [filters, setFilters] = useState({ veteran_stat: "", num_of_kids: "" });
 
   // will retrieve clients
@@ -71,7 +71,7 @@ export default function NavigatorForm() {
       }));
       setSearchResult(results);
       setFormVisible(false);
-      setNote("");
+      setNotes({});
       // otherwise show an empty input form
     } else {
       setSearchResult(null);
@@ -127,7 +127,7 @@ export default function NavigatorForm() {
           services: [],
           notes: [],
         });
-        setNote("");
+        setNotes({});
       } else {
         alert("ERROR: Client not created");
       }
@@ -137,20 +137,19 @@ export default function NavigatorForm() {
     }
   };
 
+  // function that allows updates as time goes on
   const handleAddNote = async (name) => {
-    if (!note.trim()) return;
-    console.log("Note to insert:", note);
+    const noteToAdd = notes[name]?.trim();
+    if (!noteToAdd) return;
 
     const client = data[name];
-    console.log("current client: ", client);
-    const timestampedNote = `${note.trim()}`;
+    const timestampedNote = `${noteToAdd}`;
 
+    // sends post request
     try {
       const response = await fetch("/api/notes", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           client_id: client.id,
           user_id: localStorage.user_id,
@@ -158,37 +157,37 @@ export default function NavigatorForm() {
         }),
       });
 
-      console.log("current client_id: ", client);
+      if (!response.ok) throw new Error("Failed to add note");
 
-      if (!response.ok) {
-        throw new Error("Failed to add note");
-      }
+      const updatedNote = await response.json();
 
-      const updatedClient = await response.json();
-
+      // update local data
       setData((prevData) => ({
         ...prevData,
         [name]: {
           ...prevData[name],
-          notes: [...prevData[name].notes, updatedClient.note.note],
+          notes: [...prevData[name].notes, updatedNote.note],
         },
       }));
-
-      setSearchResult((prev) =>
-        Array.isArray(prev)
-          ? prev.map((p) =>
-              p.name === name
-                ? { ...p, notes: [...p.notes, updatedClient.note.note] }
-                : p
+      // sets up all existing client data
+      setSearchResult((prevResults) =>
+        prevResults
+          ? prevResults.map((clientData) =>
+              clientData.name === name
+                ? {
+                    ...clientData,
+                    notes: [...clientData.notes, updatedNote.note],
+                  }
+                : clientData
             )
-          : [{ ...updatedClient }]
+          : null
       );
 
       alert("Note added successfully!");
-      setNote("");
-      setSearchTerm("");
-      setSearchResult(null);
-      setFormVisible(false);
+      setNotes((prevNotes) => ({
+        ...prevNotes,
+        [name]: "",
+      }));
     } catch (error) {
       console.error("Error adding note: ", error);
       alert("Failed to add note. Please try again.");
@@ -277,7 +276,8 @@ export default function NavigatorForm() {
                 <strong>Number of Kids:</strong> {person.num_of_kids}
               </p>
               <p>
-                <strong>Services Needed:</strong> {person.services.join(", ")}
+                <strong>Services Needed:</strong>{" "}
+                {Array.from(new Set(person.services)).join(", ")}
               </p>
               <p>
                 <strong>Current Situation:</strong> {person.current_situation}
@@ -299,14 +299,19 @@ export default function NavigatorForm() {
 
               <div className="mt-4 bg-gray-200 rounded-lg p-4 shadow-md">
                 <textarea
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="Additional Notes"
+                  value={notes[person.name] || ""}
+                  onChange={(e) =>
+                    setNotes((prevNotes) => ({
+                      ...prevNotes,
+                      [person.name]: e.target.value,
+                    }))
+                  }
+                  placeholder="Add a new note"
                   className="w-full p-2 border border-gray-300 rounded-md mb-2"
                 />
                 <button
                   onClick={() => handleAddNote(person.name)}
-                  className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 transition"
+                  className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600 transition"
                 >
                   Add Note
                 </button>
