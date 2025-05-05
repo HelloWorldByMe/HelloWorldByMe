@@ -174,10 +174,10 @@ const ServiceMatch = () => {
       <h2 className="text-2xl font-bold mb-4 text-center">Service Matching</h2>
 
       <div className="mb-6">
-        <label className="block mb-2 text-blue-800 font-medium">
+        <label htmlFor="select-individual" className="block mb-2 text-blue-800 font-medium">
           Select Individual
         </label>
-        <select
+        <select id="select-individual"
           value={selectedClient}
           onChange={(e) => setSelectedClient(e.target.value)}
           className="w-full p-2 border border-gray-300 rounded-md"
