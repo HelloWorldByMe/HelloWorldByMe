@@ -159,10 +159,10 @@ export default function Mapping() {
       </h2>
 
       <div className="mb-6">
-        <label className="block mb-2 text-blue-800 font-medium">
+        <label htmlFor="select-client" className="block mb-2 text-blue-800 font-medium">
           Select Client to Place Marker
         </label>
-        <select
+        <select id="select-client"
           className="w-full p-2 border border-gray-300 rounded-md"
           value={selectedClientId}
           onChange={(e) => setSelectedClientId(e.target.value)}
