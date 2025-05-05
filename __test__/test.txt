@@ -1,0 +1,2 @@
+This is a folder for all the tests conducted. 
+There are 10 total tests for the navigation system and they all pass.
